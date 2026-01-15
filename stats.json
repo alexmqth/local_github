@@ -1,0 +1,7 @@
+{
+  "total_raw": 30534,
+  "valid": 8144,
+  "valid_rate": 0.2667190672692736,
+  "min_paths": 2,
+  "dedupe": true
+}
