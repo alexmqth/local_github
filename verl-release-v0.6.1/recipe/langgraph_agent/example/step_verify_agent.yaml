@@ -1,0 +1,25 @@
+- name: step_verify_agent
+  _target_: verl.experimental.agent_loop.step_verify_agent_loop.StepVerifyAgentLoop
+  # Custom config for this agent loop. These kwargs are passed to StepVerifyAgentLoop.init_class(**kwargs).
+  step_verify:
+    # Step-wise verifier (optional)
+    llm_enable: false
+    llm_always: false
+    llm_on_incorrect: true
+    llm_on_none: true
+    combine: max
+
+    # Judge model backend (B方案：单独加载 judge 模型，不依赖第二个 vLLM server)
+    # Default uses CPU to avoid occupying training/rollout GPU.
+    judge_backend: local
+    judge_model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+    judge_device: cpu
+    judge_dtype: auto
+
+    # Final reward (independent from step rewards)
+    final_enable: true
+    final_weight: 1.0
+    final_mode: answer   # answer | proof | auto
+    final_llm_enable: false
+
+

@@ -1,0 +1,20 @@
+interaction:
+  - class_name: verl.interactions.step_verifier_interaction.StepVerifierInteraction
+    name: step_verifier
+    config:
+      # Optional: a dotted import path to your verifier function.
+      # Signature: verifier(assistant_text: str, expected: Any|None, ctx: dict) -> float
+      #
+      # Examples:
+      # verifier_fn: "my_pkg.my_module.my_verifier"
+      # verifier_fn: "my_pkg.my_module:my_verifier"
+      verifier_fn: null
+
+      # Defaults (can be overridden in per-sample interaction_kwargs)
+      max_turns: 32
+      stop_on_incorrect: false
+      feedback_mode: none   # none | binary
+
+
+
+

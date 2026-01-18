@@ -1,0 +1,113 @@
+- name: backward_agent
+  _target_: verl.experimental.agent_loop.backward_agent_loop.BackwardAgentLoop
+
+  # Custom config for this agent loop.
+  # These kwargs are passed to BackwardAgentLoop.init_class(**kwargs) and will be available as `kwargs["backward_agent"]`.
+  backward_agent:
+    # -----------------------------
+    # Forward agent (FROZEN) remote endpoint (OpenAI-compatible, e.g. vLLM OpenAI server)
+    # -----------------------------
+    # Required. Example:
+    # - "http://127.0.0.1:8000/v1" (recommended)
+    # - "http://127.0.0.1:8000"
+    forward_base_url: "http://127.0.0.1:8000/v1"
+
+    # Required. The model name exposed by the OpenAI server (vLLM: --served-model-name)
+    forward_model: "YOUR_FORWARD_SERVED_MODEL_NAME"
+
+    # Optional. If your OpenAI-compatible endpoint requires a key.
+    forward_api_key: null
+
+    # Forward decoding controls (affects frozen solver behavior; does NOT affect backward training directly)
+    forward_timeout_s: 120
+    forward_max_tokens: 1024
+    forward_temperature: 0.0
+    forward_top_p: 1.0
+    # Limit in-flight forward remote requests per worker process (avoid flooding vLLM server).
+    # 0 or negative means no limit.
+    forward_max_concurrency: 8
+
+    # -----------------------------
+    # Prompts (high-impact knobs)
+    # -----------------------------
+    # Backward agent system prompt (the TRAINED model).
+    # It MUST output strict JSON each step (format reward depends on this).
+    backward_system_prompt: |-
+      You are a backward planning agent for math problems.
+      Your job: decompose the original problem into subproblems, orchestrate a frozen forward solver, and verify.
+      You MUST output ONLY one STRICT JSON object each step (no extra text, no explanations, no markdown).
+      The JSON schema and constraints will be provided in the user message.
+
+    # Forward agent system prompt (the FROZEN model).
+    # Forward sees: full history + KnownClues list every turn.
+    forward_system_prompt: |-
+      You are a forward problem-solving agent.
+      You will be asked ONE subproblem at a time.
+      Answer that subproblem correctly and briefly.
+      Use the provided KnownClues as context.
+      Do NOT ask questions back.
+      When explicitly asked for FINAL answer, output it as <Answer>...</Answer>.
+
+    # -----------------------------
+    # Loop control
+    # -----------------------------
+    # Max backward decision rounds per trajectory (each round makes 1 backward generation + 1 forward call).
+    max_rounds: 24
+
+    # FIFO queue max length for pending subproblems (older ones are dropped).
+    max_queue_items: 32
+
+    # KnownClues constraints (shared across turns; shown to forward every turn).
+    max_clues: 10
+    # Rough char budget proxy to keep clues within ~512 tokens.
+    max_clues_chars_total: 2200
+
+    # -----------------------------
+    # Reward knobs
+    # -----------------------------
+    # Final reward is ONLY based on whether forward final answer matches ground_truth (see code for extraction).
+    final_enable: true
+    final_exact_match: true
+
+    # Step reward components (process rewards):
+    # - format reward: strict JSON object (no extra text) -> +step_format_reward
+    # - schema reward: JSON passes fixed-key + constraint checks -> +step_schema_reward
+    step_format_reward: 0.05
+    step_schema_reward: 0.05
+
+    # -----------------------------
+    # Teacher SFT data collection (optional)
+    # -----------------------------
+    # If enabled, for EACH backward turn input (system+state user message), we call a remote teacher model
+    # (e.g. OpenAI gpt-5-mini) to produce the JSON label, and append ONE JSONL line:
+    #   {"prompt":[{"role":"system","content":...},{"role":"user","content":...}], "response":"{...}", "meta": {...}}
+    teacher_enable: false
+    teacher_base_url: "https://api.openai.com/v1"
+    teacher_api_key: null
+    teacher_model: "gpt-5-mini"
+    teacher_timeout_s: 120
+    teacher_max_output_tokens: 256
+    # Limit in-flight teacher remote requests per worker process (avoid rate-limit bursts).
+    # 0 or negative means no limit.
+    teacher_max_concurrency: 4
+    # Sampling controls:
+    # - every_n: collect at most once every N backward inputs (round index based). 1 means collect every time.
+    # - sample_prob: after passing every_n gate, collect with probability in [0,1]. 1.0 means always.
+    teacher_every_n: 1
+    teacher_sample_prob: 1.0
+    # If empty, reuse backward_system_prompt
+    teacher_system_prompt: ""
+    # Output path supports {pid} and {host}
+    teacher_output_path: "teacher_sft_{host}_{pid}.jsonl"
+    teacher_flush: true
+    teacher_fsync: false
+    teacher_max_chars_per_text: 8000
+
+    # -----------------------------
+    # Debugging
+    # -----------------------------
+    # If true, dumps a compact trace into extra_fields["backward_forward_trace"] for inspection.
+    trace_enable: true
+    trace_max_chars_per_text: 4000
+
+
