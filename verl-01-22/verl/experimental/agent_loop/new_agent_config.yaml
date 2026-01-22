@@ -1,0 +1,103 @@
+# Reframe/Split meta-tool agent loop config (OmegaConf list).
+#
+# Usage (example):
+#   actor_rollout_ref.rollout.agent.agent_loop_config_path=verl/experimental/agent_loop/reframe_step_verify_agent.yaml
+#   actor_rollout_ref.rollout.agent.default_agent_loop=reframe_step_verify_agent
+#
+# The entries here are passed as **kwargs to ReframeStepVerifyAgentLoop.init_class():
+#   - step_verify: verifier/judge settings
+#   - reframe_tool: meta-tool settings
+#
+- name: reframe_step_verify_agent
+  _target_: verl.experimental.agent_loop.reframe_step_verify_agent_loop.ReframeStepVerifyAgentLoop
+
+  # Share the same config across aliases (OmegaConf supports YAML anchors).
+  step_verify: &step_verify_cfg
+    llm_enable: true
+    llm_max_new_tokens: 1
+    # If false: judge score is only used to trigger reframe/split, but no step(process) rewards are emitted.
+    step_reward_enable: false
+    llm_prompt_template: |-
+      You are a strict verifier.
+      Decide whether the assistant answer correctly solves the given subproblem.
+      Output EXACTLY one character: 1 or 0.
+      Do NOT output any other text (no words, no punctuation, no whitespace, no explanation).
+      If you are unsure, output 0.
+
+      Subproblem:
+      {question}
+
+      Assistant answer:
+      {answer}
+
+    # Judge backend (for step verification)
+    judge_backend: remote
+    judge_base_url: http://74.15.83.102:45230/v1
+    judge_model_name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+    judge_api_key: "c853e1123e27fd0f6ef82f760d756181917c946766484af1ffb7bf6898d33f8c" 
+    judge_timeout_s: 240
+    judge_max_concurrency: 8
+
+    # Optional final reward (off by default here)
+    final_enable: true
+
+  reframe_tool: &reframe_tool_cfg
+    enable: true
+    trigger_score_threshold: 0.0
+    max_tool_uses: 2
+
+    # If true: model must emit <tool_call>{"name":"reframe_subproblem"...}</tool_call> or split_subproblem
+    require_model_request: true
+    tool_call_format: hermes
+    auto_action: split
+
+    # Tool backend (if omitted, will reuse the step verifier judge backend settings)
+    tool_backend: remote
+    tool_base_url: http://74.15.83.102:45230/v1
+    tool_model_name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+    tool_api_key: "c853e1123e27fd0f6ef82f760d756181917c946766484af1ffb7bf6898d33f8c" 
+    tool_timeout_s: 240
+    tool_max_new_tokens: 256
+    tool_temperature: 0.2
+    tool_top_p: 0.95
+
+    request_prompt: |-
+      Your last answer received a low external score (e.g., 0).
+      You may call a "meta tool" that asks an external LLM to either rewrite the current subproblem more clearly,
+      or split it into smaller sequential subproblems.
+
+      Output ONLY ONE tool call in Hermes format. Do not output any other text.
+      Available tools:
+      - reframe_subproblem: rewrite the current subproblem to be clearer and more actionable.
+        Example: <tool_call>{"name":"reframe_subproblem","arguments":{"subproblem":"..."} }</tool_call>
+      - split_subproblem: split the current subproblem into smaller sequential subproblems.
+        Example: <tool_call>{"name":"split_subproblem","arguments":{"subproblem":"..."} }</tool_call>
+
+    reframe_prompt_template: |-
+      You rewrite subproblems to be clearer and more specific.
+      Return ONLY valid JSON: {"subproblem": "..."}.
+
+      Original subproblem:
+      {question}
+
+      Assistant answer (may be wrong):
+      {answer}
+
+    split_prompt_template: |-
+      You split a subproblem into smaller, sequential subproblems.
+      Return ONLY valid JSON: {"subproblems": ["...", "..."]}.
+
+      Original subproblem:
+      {question}
+
+      Assistant answer (may be wrong):
+      {answer}
+
+# Compatibility alias: some datasets set agent_name="step_verify_agent".
+# Keep this entry so those samples still route to the reframe-capable loop.
+- name: step_verify_agent
+  _target_: verl.experimental.agent_loop.reframe_step_verify_agent_loop.ReframeStepVerifyAgentLoop
+  step_verify: *step_verify_cfg
+  reframe_tool: *reframe_tool_cfg
+
+

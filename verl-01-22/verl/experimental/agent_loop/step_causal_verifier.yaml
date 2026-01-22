@@ -1,0 +1,79 @@
+- name: step_causal_verifier_agent
+  _target_: verl.experimental.agent_loop.step_causal_verifier.StepCausalVerifierAgentLoop
+  # Reuse the same config namespace `step_verify` so we can leverage StepVerifyAgentLoop's judge backends.
+  step_verify:
+    # Judge backend (remote/local/policy) for PNS scoring
+    # judge_backend: remote
+    # judge_base_url: ${oc.env:JUDGE_BASE_URL, ""}      # e.g. http://127.0.0.1:8000/v1
+    # judge_model_name_or_path: ${oc.env:JUDGE_MODEL, ""}  # served model name (your fine-tuned judge)
+    # judge_api_key: ${oc.env:JUDGE_API_KEY, ""}        # use EMPTY if not required
+    # judge_timeout_s: 240
+    judge_max_concurrency: 64
+
+    judge_backend: local
+    judge_model_name_or_path: /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-22/hf_models/CausalReasoningModel
+    judge_device: cpu
+    judge_dtype: float32
+
+    # PNS judge mode:
+    # - float: use prob/score in [0,1] and compare with pns_threshold
+    # - discrete: use 0/1 directly to decide retry (pns_threshold is ignored)
+    pns_mode: discrete
+    pns_seqcls_enable: true
+
+    # Step-causal PNS judging prompt & decoding
+    pns_prompt_template: |-
+      You are a strict causal coherence / necessity judge.
+      Given the problem, the current subproblem, and the assistant answer, output a PNS score in [0,1].
+      Higher means the step is more causally coherent/necessary; lower means it is not necessary or is incoherent.
+      Output ONLY one number in [0,1].
+
+      Problem:
+      {problem}
+
+      Subproblem:
+      {subproblem}
+
+      Assistant answer:
+      {answer}
+
+      pns=
+    pns_max_new_tokens: 8
+    pns_temperature: 0.0
+    pns_top_p: 1.0
+
+    # Reward / retry knobs
+    pns_threshold: 0.6
+    pns_pass_reward: 0.05
+    pns_fail_reward: 0.0
+    pns_max_retries: 2
+    pns_exceed_retry_penalty: 0.05
+    pns_feedback_template: |-
+      This step is not acceptable: causal logic is not rigorous.
+      Please rewrite ONLY this step and try again. Requirements:
+      - Make the reasoning causally coherent with the prior context
+      - skip unecessaryh steps
+      - Do not add multiple steps at once (only generate 1-3 sentences)
+    pns_ok_continue_msg: |-
+      Good. Continue with the next step (one step only).
+    pns_ok_finish_msg: |-
+      Good. Now provide the complete final solution and end with <ANSWER>...</ANSWER>.
+    pns_proceed_after_penalty_msg: |-
+      Too many retries. Proceed to the next step anyway (one step only).
+    pns_max_steps: 32
+
+    # Process-reward scaling (step reward scaling):
+    # scale each per-turn reward/penalty by (step_total_weight / N_turns)
+    # so the overall magnitude is on the order of step_total_weight.
+    step_scale_by_num_turns: true
+    step_total_weight: 0.3
+    step_clip_min: -1.0
+    step_clip_max: 1.0
+
+    # Final reward (reuse StepVerifyAgentLoop final verification)
+    final_enable: true
+    final_weight: 1.0
+    final_mode: answer
+    final_llm_enable: false
+
+

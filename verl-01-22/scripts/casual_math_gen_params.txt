@@ -1,0 +1,135 @@
+casual_math_gen.py 关键参数说明（建议保存/直接复制命令）
+====================================================
+
+脚本：scripts/casual_math_gen.py
+用途：在 MATH-lighteval（train）上做 PNS 风格的数据生成，并输出 JSONL：
+- orig_steps：从 solution 切出来的步骤（用于定位）
+- kept_steps：按 PNS 干预后保留的步骤（causal_math2agent_loop.py 会用它构造训练数据）
+- per_step_pns：与 orig_steps 对齐的 PNS 列表（未评测为 null）
+- pns_eval_mask：与 orig_steps 对齐的 0/1 mask（1=参与评测，0=未参与）
+
+
+一、最常用 / 必配参数
+--------------------
+
+1) 模型与后端
+- --backend {vllm,hf}
+  - vllm：推荐，速度快（需要本机 vllm）
+  - hf：transformers 本地推理
+
+- --model <模型路径或HF repo>
+  - 例如：Qwen/Qwen2.5-7B-Instruct 或你的本地路径
+
+2) 输出与数量
+- --output <输出jsonl路径>
+- --max_samples <最大样本数>（默认 100）
+- --seed <随机种子>
+
+3) PNS 超参数
+- --k <每个 step 的 rollout 采样数>（默认 5）
+- --alpha <阈值>（默认 0.6）
+  - 规则：pns > alpha => 认为必要 => 保留；否则删除（仅对“参与评测”的 step 生效）
+
+
+二、只评测部分 step（强烈推荐：省资源 + 不误导 kept_steps）
+---------------------------------------------------------
+
+1) 控制“每题最多评测多少步”
+- --pns_eval_max_steps N
+  - 0：评测所有步（最慢）
+  - >0：每题只评测最多 N 个 step；未评测的 step 默认保留到 kept_steps（不会误删）
+
+2) 如何选这些 step（默认更偏中间）
+- --pns_eval_strategy {middle,uniform,random,first,last}
+  - middle（默认）：优先挑中间
+  - uniform：均匀采样
+  - random：随机采样
+  - first/last：取前/后
+
+3) 避免评测“最后给答案”的 step（默认开启）
+- --pns_exclude_last_n N
+  - 默认 1：不评测最后 1 步
+
+- （默认行为）会额外排除包含以下特征的 step：
+  - \\boxed
+  - <ANSWER>...</ANSWER>
+  - Answer: / Final Answer:
+
+- --pns_allow_answer_steps
+  - 如果你明确想评测答案步才打开（一般不建议）
+
+
+三、答案抽取与“最终保险”（可选但很耗资源）
+----------------------------------------
+
+脚本已经增强了本地抽取（支持嵌套 \\boxed{\\frac{...}{...}}，并优先 <ANSWER> 标签）。
+
+如果你仍担心 rollout 的最终答案抽取误差影响 PNS，可以启用外部“答案等价判定模型”作为保险：
+它只在本地抽取判定“答案不一致/抽不到”时才会调用。
+
+启用外部 verifier（OpenAI-compatible，例如 vLLM 服务器上跑 TIGER-Lab/general-verifier）：
+- --answer_verifier_enable
+- --answer_verifier_base_url http://127.0.0.1:8000/v1
+- --answer_verifier_model general-verifier
+- --answer_verifier_on_mismatch     （推荐：仅在抽取不一致时才调用）
+
+可选：
+- --answer_verifier_api_key EMPTY
+- --answer_verifier_api_mode chat|completion
+- --answer_verifier_max_tokens 64
+- --answer_verifier_timeout_s 120
+- --answer_verifier_on_no_extract  （不推荐：抽不到也问，会非常耗）
+
+
+四、脚本内置的“省资源”规则
+-------------------------
+
+- solution 切分后 steps <= 2 的样本会被跳过（避免为极短解答做 PNS 采样）
+
+
+五、推荐标准调用方式（vLLM，本地快速、评测中间步、避开答案步）
+--------------------------------------------------------
+
+（1）不启用外部 verifier（默认更省资源）
+
+python scripts/casual_math_gen.py ^
+  --backend vllm ^
+  --model Qwen/Qwen2.5-7B-Instruct ^
+  --output outputs/pns_math_train.jsonl ^
+  --max_samples 2000 ^
+  --seed 42 ^
+  --k 5 ^
+  --alpha 0.6 ^
+  --pns_eval_max_steps 6 ^
+  --pns_eval_strategy middle ^
+  --pns_exclude_last_n 1
+
+（2）启用外部 verifier（更稳但更慢；只在 mismatch 时调用）
+
+python scripts/casual_math_gen.py ^
+  --backend vllm ^
+  --model Qwen/Qwen2.5-7B-Instruct ^
+  --output outputs/pns_math_train.jsonl ^
+  --max_samples 2000 ^
+  --seed 42 ^
+  --k 5 ^
+  --alpha 0.6 ^
+  --pns_eval_max_steps 6 ^
+  --pns_eval_strategy middle ^
+  --pns_exclude_last_n 1 ^
+  --answer_verifier_enable ^
+  --answer_verifier_base_url http://127.0.0.1:8000/v1 ^
+  --answer_verifier_model general-verifier ^
+  --answer_verifier_on_mismatch
+
+
+六、给 causal_math2agent_loop.py 的建议用法（保持你现有逻辑）
+-------------------------------------------------------
+
+causal_math2agent_loop.py 会用 kept_steps 构造训练数据；
+你现在还能用这些字段快速定位：
+- pns_eval_mask / pns_eval_indices：哪些 step 参与了 PNS 评测
+- per_step_pns：具体 PNS 值（未评测为 null）
+
+
+
