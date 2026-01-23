@@ -9,18 +9,25 @@
 # nvidia-smi
 
 export HUGGINGFACE_HUB_TOKEN=$HF_TOKEN
-export HOME=/local/scratch/zqin30
-export XDG_CACHE_HOME=/local/scratch/zqin30/.cache
-source /local/scratch/zqin30/miniconda/etc/profile.d/conda.sh
-conda activate verl
+export XDG_CACHE_HOME="$CACHE_ROOT"
 
-export CUDA_HOME=/usr/local/cuda-12.4
-export PATH="$CUDA_HOME/bin:$PATH"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
-export CUDACXX="$CUDA_HOME/bin/nvcc"
+ENV_NAME="verlrl"
+CONDA_SH="/home/projects/hku-medai/larrypl/anaconda3/etc/profile.d/conda.sh"
 
-export HF_HOME=/local/scratch/zqin30/.cache/huggingface 
+if [ -z "${CONDA_PREFIX:-}" ]; then
+  source "$CONDA_SH"
+  conda activate "$ENV_NAME"
+fi
 
+export CUDA_HOME="$CONDA_PREFIX"
+export PATH="$CONDA_PREFIX/bin:$PATH"
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$CONDA_PREFIX/lib64:${LD_LIBRARY_PATH:-}"
+export CUDACXX="$CONDA_PREFIX/bin/nvcc"
+
+export HF_HOME="$CACHE_ROOT/huggingface" 
+export VLLM_USE_FLASHINFER=1
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
 # # GSM8K 评测
 # python causal_inf.py \
 #     --policy_model_path path/to/your/checkpoint \
@@ -37,11 +44,11 @@ export HF_HOME=/local/scratch/zqin30/.cache/huggingface
 #     --dataset_name HuggingFaceH4/MATH-500 \
 #     --out_jsonl outputs/math500_preds.jsonl \
 #     --max_examples 50
-
-cd /local/scratch/zqin30/projects/repo/verl-agent-loop/verl/inference
-python /local/scratch/zqin30/projects/repo/verl-agent-loop/verl/inference/causal_inf.py \
-  --policy_model_path /local/scratch/zqin30/checkpoints/math/agent_loop/qwen2_5_7b_step_causal_verifier_v1 \
-  --out_jsonl causal_outputs/qwen2_5_7b_step_causal_verifier_v1.jsonl \
+1
+cd /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-22/infer
+python /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-22/infer/causal_inf.py \
+  --policy_model_path /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/checkpoints/qwen2_5_7b_ins_step_causal_verifier_h800_optimized/global_step_29_merged \
+  --out_jsonl /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/causal_outputs/qwen2_5_7b_math_all.jsonl \
   --judge_device cuda \
   --policy_device cuda \
   --max_examples 500

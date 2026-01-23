@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-_CAUSAL_REASONINGMODEL_NAME = "MakimaSasha/CausalReasoningModel"
+_CAUSAL_REASONINGMODEL_NAME = "/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/CausalReasoningModel"
 
 
 def _strip_dollar(s: str) -> str:
@@ -465,7 +465,7 @@ def main() -> int:
         "--judge_model_path",
         type=str,
         default=_CAUSAL_REASONINGMODEL_NAME,
-        help="Seq-classification judge model (default: MakimaSasha/CausalReasoningModel)",
+        help="Seq-classification judge model (default: /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/CausalReasoningModel)",
     )
     ap.add_argument("--policy_device", type=str, default="cuda", help="cuda|cpu (auto-fallback if no cuda)")
     ap.add_argument("--judge_device", type=str, default="cpu", help="cuda|cpu (cpu recommended)")
@@ -503,7 +503,7 @@ def main() -> int:
     )
 
     # Data / output
-    ap.add_argument("--dataset_name", type=str, default="HuggingFaceH4/MATH-500")
+    ap.add_argument("--dataset_name", type=str, default="/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-22/datasets/MATH-500")
     ap.add_argument("--dataset_config", type=str, default=None, help="Dataset config name (e.g., 'main' for gsm8k)")
     ap.add_argument("--split", type=str, default="test")
     ap.add_argument("--max_examples", type=int, default=0, help="If >0, only run first N examples")
