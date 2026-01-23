@@ -69,17 +69,19 @@ export HYDRA_FULL_ERROR=1
 
 cd "$RUN_DIR"
 
-# === [安全模式] 降级参数以避免 512G 内存 OOM ===
-# 策略：大幅减少数据量，直到模型学会停止 (Clip Ratio < 1.0)
-n_resp_per_prompt=16      # 从 16 降级
-train_batch_size=64       # 从 64 降级
+# === [安全模式] 参数（已按“多轮 + 每轮更短”修改）===
+# 核心改动：
+# 1) 放开 multi-turn 上限：max_turns 从 2 -> 16（否则 num_turns 永远上不去）
+# 2) 压短每轮输出：max_response_length 从 256 -> 96（防止一轮写完很多步）
+n_resp_per_prompt=16
+train_batch_size=64
 
 ppo_mini_batch_size=64
 micro_batch_size=32
 
-max_turns=2
+max_turns=16
 max_prompt_length=4096
-max_response_length=256
+max_response_length=96
 
 infer_tp=1
 train_sp=1
@@ -146,12 +148,11 @@ python3 -m verl.trainer.main_ppo \
 ############################################
 echo "=== Training finished. Starting Model Merge... ==="
 
-# 1. 定义最终模型保存的根目录 (根据你的要求)
+# 1. 定义最终模型保存的根目录
 RL_MODELS_ROOT="/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-22/rl_models"
 TARGET_DIR="${RL_MODELS_ROOT}/${experiment_name}"
 
-# 2. 自动寻找最新的 Checkpoint (在 default_local_dir 下找 global_step 最大值)
-# sort -V 用于版本号排序 (确保 global_step_100 排在 global_step_9 后面)
+# 2. 自动寻找最新的 Checkpoint
 LATEST_CHECKPOINT=$(ls -d "${default_local_dir}"/global_step_* 2>/dev/null | sort -V | tail -n 1)
 
 if [ -z "$LATEST_CHECKPOINT" ]; then
