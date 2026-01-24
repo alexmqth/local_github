@@ -66,6 +66,9 @@ def _has_answer_marker(text: str) -> bool:
     # common patterns we care about
     if "<answer" in t.lower() or "</answer" in t.lower():
         return True
+    # GSM8K style final answer marker
+    if re.search(r"###\s*\S+", t):
+        return true
     if "\\boxed" in t:
         return True
     if re.search(r"final\s+answer", t, flags=re.IGNORECASE):
@@ -237,6 +240,11 @@ class _VerifierConfig:
     # Keep configurable so users can match their judge model recommendations.
     final_llm_temperature: float = 0.0
     final_llm_top_p: float = 1.0
+
+    # anti-early-final gate:
+    min_assistant_turns_before_answer: int = 0
+    early_answer_penalty: float = 0.0
+
     # Optional overrides for FINAL judge backend/model (useful when step judge != final judge).
     # If any of these are set, final judge will use them instead of the shared judge_* config.
     final_judge_backend: Optional[str] = None  # policy | local | remote
@@ -381,6 +389,8 @@ class StepVerifyAgentLoop(AgentLoopBase):
             final_llm_max_new_tokens=int(step_cfg.get("final_llm_max_new_tokens", 128)),
             final_llm_temperature=float(step_cfg.get("final_llm_temperature", 0.0)),
             final_llm_top_p=float(step_cfg.get("final_llm_top_p", 1.0)),
+            min_assistant_turns_before_answer=int(step_cfg.get("min_assistant_turns_before_answer", 0)),
+            early_answer_penalty=float(step_cfg.get("early_answer_penalty", 0.0)),
             final_judge_backend=step_cfg.get("final_judge_backend"),
             final_judge_model_name_or_path=step_cfg.get("final_judge_model_name_or_path"),
             final_judge_base_url=step_cfg.get("final_judge_base_url"),
@@ -929,18 +939,31 @@ class StepVerifyAgentLoop(AgentLoopBase):
             if response_logprobs:
                 response_logprobs += [0.0] * len(user_ids)
 
-        # 5) final reward (independent): only depends on final correctness
-        final_reward = 0.0
-        if self.verifier_cfg.final_enable and ground_truth is not None:
-            last_assistant = _extract_last_assistant_text(messages)
-            final_reward = await self._verify_final(
-                request_id=request_id,
-                problem_text=str(problem_text),
-                last_assistant_text=str(last_assistant),
-                ground_truth=str(ground_truth),
-                sampling_params=sampling_params,
-            )
-            final_reward *= float(self.verifier_cfg.final_weight)
+		# 5) final reward (independent): only depends on final correctness
+		# Add an anti-early-final gate to prevent "answer too early" collapse when final_weight is large.
+		final_reward = 0.0
+		min_turns = int(getattr(self.verifier_cfg, "min_assistant_turns_before_answer", 0) or 0)
+		early_pen = float(getattr(self.verifier_cfg, "early_answer_penalty", 0.0) or 0.0)
+		early_answer = (
+			(min_turns > 0)
+			and (first_answer_marker_turn is not None)
+			and ((int(first_answer_marker_turn) + 1) < min_turns)/
+		)
+		
+		if self.verifier_cfg.final_enable and ground_truth is not None:
+			if early_answer:
+				# Suppress final correctness reward; optionally apply a penalty
+				final_reward = -early_pen if early_pen > 0 else 0.0
+			else:
+				last_assistant = _extract_last_assistant_text(messages)
+				final_reward = await self._verify_final(
+					request_id=request_id,
+					problem_text=str(problem_text),
+					last_assistant_text=str(last_assistant),
+					ground_truth=str(ground_truth),
+					sampling_params=sampling_params,
+				)
+				final_reward *= float(self.verifier_cfg.final_weight)
 
         # Optional PRM "final_once" evaluation: compute PRM scores once over the whole problem and map back to turns.
         if bool(getattr(self.verifier_cfg, "prm_enable", False)) and (self.verifier_cfg.prm_eval_mode or "").lower() == "final_once":
