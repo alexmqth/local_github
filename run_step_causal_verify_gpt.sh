@@ -21,7 +21,7 @@ VAL_PARQUET="${VAL_PARQUET:-$TRAIN_PARQUET}"
 MODEL_PATH="${MODEL_PATH:-/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/Qwen/Qwen2.5-7B-Instruct}"
 
 #experiment_name="${experiment_name:-qwen2_5_7b_ins_math_all_epoch3}"
-experiment_name="${experiment_name:-qwen2_5_7b_ins_gsm8k-01-24-new_reward_2}"
+experiment_name="${experiment_name:-qwen2_5_7b_ins_gsm8k-01-24-new_reward_3}"
 
 verifier_yaml="$RUN_DIR/step_causal_verifier.yaml"
 #verifier_yaml="$RUN_DIR/step_causal_verifier_gsm8k.yaml"
@@ -81,7 +81,7 @@ micro_batch_size=32
 
 max_turns=12
 max_prompt_length=4096
-max_response_length=128
+max_response_length=96
 
 infer_tp=1
 train_sp=1
