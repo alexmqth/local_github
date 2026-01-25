@@ -584,11 +584,12 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
                         turn_scores.append(float(cfg.fail_reward))
                         retry_counts.append(int(retry_for_current_step))
                         if force_early_marker_fail:
-                            fb = (
-                                "This step is not acceptable. You revealed a final answer too early.\n"
-                                f"Do NOT output any final answer marker (<ANSWER>/####/\\\\boxed/Answer:) until step >= {min_turns}.\n"
-                                "Rewrite ONLY this single step (1-3 sentences) and continue."
-                            )
+                            fb = f"Too early. No <ANSWER>/#### until step >= {min_turns}. Rewrite 1 step (1-3 sentences)."
+                            #fb = (
+                            #   "This step is not acceptable. You revealed a final answer too early.\n"
+                            #    f"Do NOT output any final answer marker (<ANSWER>/####/\\\\boxed/Answer:) until step >= {min_turns}.\n"
+                            #    "Rewrite ONLY this single step (1-3 sentences) and continue."
+                            #)
                         else:
                             fb = cfg.feedback_template.format(pns=float(pns), threshold=float(cfg.pns_threshold))
                         add_messages = [{"role": "user", "content": fb}]
@@ -600,8 +601,12 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
             user_turns += 1
 
             user_ids = await self._encode_incremental_messages(add_messages)
-            if len(response_mask) + len(user_ids) >= self.response_length:
+            # if len(response_mask) + len(user_ids) >= self.response_length:
+            #     break
+            # 用 prompt_length 做上限（通常是 4096），避免 feedback 一加就 break
+            if self.prompt_length and (len(prompt_ids) + len(user_ids)) >= int(self.prompt_length):
                 break
+
             prompt_ids += user_ids
             response_mask += [0] * len(user_ids)
             if response_logprobs:

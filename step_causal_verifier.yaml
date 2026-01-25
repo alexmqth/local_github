@@ -34,7 +34,7 @@
     # 判分/奖励
     pns_threshold: 0.6
     pns_pass_reward: 0.05
-    pns_fail_reward: -0.01
+    pns_fail_reward: -0.005
     pns_max_retries: 2
     pns_exceed_retry_penalty: 0.05
 
@@ -64,12 +64,12 @@
     # GSM8K 一般 6-10 步足够；你现在 num_turns 打满就是这里太大导致的概率很高
     pns_max_steps: 12
 
-    early_answer_penalty: 0.01
-    min_assistant_turns_before_answer: 4 
+    early_answer_penalty: 0.0
+    min_assistant_turns_before_answer: 2
 
     # 关键：恢复按回合数缩放，避免 turn-farming（走更多步就赚更多）
     step_scale_by_num_turns: true
-    step_total_weight: 0.1
+    step_total_weight: 0.2
     step_clip_min: -1.0
     step_clip_max: 1.0
 
