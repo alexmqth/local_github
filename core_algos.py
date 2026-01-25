@@ -346,7 +346,8 @@ def compute_grpo_vectorized_outcome_advantage(
     """
     with torch.no_grad():
         scores = token_level_rewards.sum(dim=-1)
-        g = as_torch_index(index, device=scores.device)
+        # g = as_torch_index(index, device=scores.device)
+        g = torch.as_tensor(index, dtype=torch.long, device=token_level_rewards.device)
         mean_g, std_g, _ = group_mean_std(scores, g, eps=epsilon)
         if norm_adv_by_std_in_grpo:
             scalars = (scores - mean_g[g]) / (std_g[g] + epsilon)
@@ -389,47 +390,41 @@ def compute_grpo_token_level_advantage(
         returns: (bs, response_length) - same as advantages for GRPO
     """
     with torch.no_grad():
-        # Use rm_scores if provided, otherwise fall back to token_level_rewards
-        if rm_scores is not None:
-            per_token_rewards = rm_scores
-        else:
-            per_token_rewards = token_level_rewards
-        
-        # Compute sequence-level score for normalization (sum of per-token rewards)
-        scores = (per_token_rewards * response_mask).sum(dim=-1)
-        
-        # Compute group mean and std for normalization
-        g = as_torch_index(index, device=scores.device)
-        mean_g, std_g, _ = group_mean_std(scores, g, eps=epsilon)
-        
-        # Compute per-token mean and std for the group
-        # Each token's advantage = (token_reward - mean_token_reward_in_group) / std_token_in_group
-        # But to preserve step-level credit, we use a different normalization:
-        # advantage_i = (per_token_reward_i * N / sum_of_rewards) * normalized_scalar_advantage
-        
-        # Compute scalar advantage for each sequence
+        per_token_rewards = rm_scores if rm_scores is not None else token_level_rewards
+
+        # 0) 统一 device：以当前 actor 上已有张量为准（通常 response_mask 在 trainer 侧是正确的）
+        dev = response_mask.device
+        per_token_rewards = per_token_rewards.to(dev)
+        response_mask = response_mask.to(dev)
+
+        # 1) sequence-level scores
+        scores = (per_token_rewards * response_mask).sum(dim=-1).detach()  # (bs,)
+
+        # 2) index -> int group id（兼容字符串 / object）
+        #    np.unique 会把混合/字符串 index 映射成干净的整数
+        _, group_indices = np.unique(index, return_inverse=True)
+        g = torch.as_tensor(group_indices, dtype=torch.long, device=dev)  # (bs,)
+
+        # 3) group mean/std：强烈建议显式传 device（如果函数支持）
+        #    如果 group_mean_std 不支持 device 参数，就需要改 groupwise.py（见下文）
+        mean_g, std_g, _ = group_mean_std(scores, g, eps=epsilon, device=dev)
+
+        # 4) scalar advantage
         if norm_adv_by_std_in_grpo:
             scalar_advantages = (scores - mean_g[g]) / (std_g[g] + epsilon)
         else:
             scalar_advantages = scores - mean_g[g]
-        
-        # Distribute the scalar advantage to each token proportionally to its reward
-        # This preserves the relative importance of each step
-        total_rewards = (per_token_rewards * response_mask).sum(dim=-1, keepdim=True)  # (bs, 1)
-        total_rewards = total_rewards.clamp(min=epsilon)  # Avoid division by zero
-        
-        # Each token gets: scalar_advantage * (token_reward / total_reward)
-        # This ensures tokens with higher step rewards get proportionally higher advantages
-        reward_proportions = per_token_rewards / total_rewards  # (bs, response_length)
-        advantages = scalar_advantages.unsqueeze(-1) * reward_proportions * response_mask
-        
-        # Scale to maintain similar magnitude to original GRPO
-        # Multiply by num_valid_tokens to compensate for the division above
-        num_valid_tokens = response_mask.sum(dim=-1, keepdim=True).clamp(min=1)
-        advantages = advantages * num_valid_tokens
-        
-        return advantages, advantages
 
+        # 5) distribute to tokens
+        total_rewards = (per_token_rewards * response_mask).sum(dim=-1, keepdim=True).clamp(min=epsilon)
+        reward_proportions = per_token_rewards / total_rewards
+        advantages = scalar_advantages.unsqueeze(-1) * reward_proportions * response_mask
+
+        # 6) 这里建议删掉 num_valid_tokens 乘法（你之前已经发现会更容易 NaN/爆）
+        # num_valid_tokens = response_mask.sum(dim=-1, keepdim=True).clamp(min=1)
+        # advantages = advantages * num_valid_tokens
+
+        return advantages, advantages
 
 @register_adv_est(AdvantageEstimator.GRPO_PASSK)  # or simply: @register_adv_est("grpo_passk")
 def compute_grpo_passk_outcome_advantage(
