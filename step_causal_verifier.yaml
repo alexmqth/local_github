@@ -64,7 +64,7 @@
     # GSM8K 一般 6-10 步足够；你现在 num_turns 打满就是这里太大导致的概率很高
     pns_max_steps: 12
 
-    early_answer_penalty: 0.5
+    early_answer_penalty: 0.01
     min_assistant_turns_before_answer: 4 
 
     # 关键：恢复按回合数缩放，避免 turn-farming（走更多步就赚更多）

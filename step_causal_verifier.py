@@ -25,8 +25,9 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from verl.experimental.agent_loop.agent_loop import AgentLoopOutput, register
-from verl.experimental.agent_loop.step_verify_agent_loop import StepVerifyAgentLoop
+from verl.experimental.agent_loop.step_verify_agent_loop import StepVerifyAgentLoop, _has_answer_marker
 from verl.utils.profiler import simple_timer
+
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -57,9 +58,39 @@ def _parse_float_0_1(text: str) -> Optional[float]:
     return float(x)
 
 
-def _has_answer_marker(text: str) -> bool:
+def _has_answer_marker_bak2(text: str) -> bool:
     if not isinstance(text, str):
         return False
+    t = text
+    if re.search(r"<\s*answer\s*>", t, flags=re.IGNORECASE):
+        return True
+    if re.search(r"####\s*\S+", t):  # GSM8K
+        return True
+    return False
+
+
+def _has_answer_marker_bak(text: str) -> bool:
+    if not isinstance(text, str):
+        return False
+    t = text
+    tl = t.lower()
+    # XML-ish tags
+    if "<answer" in tl or "</answer" in tl:
+        return True
+    # GSM8K marker
+    if re.search(r"####\s*\S+", t):
+        return True
+    # LaTeX boxed
+    if "\\boxed" in t:
+        return True
+    # Common phrases / formats
+    if re.search(r"final\s+answer", t, flags=re.IGNORECASE):
+        return True
+    if re.search(r"^\s*answer\s*:\s*\S+", t, flags=re.IGNORECASE | re.MULTILINE):
+        return True
+    if re.search(r"the\s+answer\s+is\s+\S+", t, flags=re.IGNORECASE):
+        return True
+    return False
     t = text.lower()
     if "<answer" in t:
         return True
@@ -118,6 +149,12 @@ class _CausalCfg:
     exceed_retry_penalty: float = 0.05
     max_retries: int = 2
     max_steps: int = 32  # maximum accepted steps before forcing stop (safety)
+
+    # Anti-early-final gate (decision-level):
+    # Require at least this many assistant turns before allowing any final-answer marker.
+    min_assistant_turns_before_answer: int = 0
+    # If a final-answer marker appears earlier than allowed, apply this penalty to final reward.
+    early_answer_penalty: float = 0.0
 
     # Optional step reward scaling (process reward):
     # If enabled, scale all per-turn rewards/penalties by (step_total_weight / N),
@@ -240,6 +277,8 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
             exceed_retry_penalty=float(step_cfg.get("pns_exceed_retry_penalty", _CausalCfg.exceed_retry_penalty)),
             max_retries=int(step_cfg.get("pns_max_retries", _CausalCfg.max_retries)),
             max_steps=int(step_cfg.get("pns_max_steps", _CausalCfg.max_steps)),
+            min_assistant_turns_before_answer=int(step_cfg.get("min_assistant_turns_before_answer", _CausalCfg.min_assistant_turns_before_answer)),
+            early_answer_penalty=float(step_cfg.get("early_answer_penalty", _CausalCfg.early_answer_penalty)),
             step_scale_by_num_turns=bool(step_cfg.get("step_scale_by_num_turns", _CausalCfg.step_scale_by_num_turns)),
             step_total_weight=float(step_cfg.get("step_total_weight", _CausalCfg.step_total_weight)),
             step_clip_min=float(step_cfg.get("step_clip_min", _CausalCfg.step_clip_min)),
@@ -411,6 +450,9 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
         assistant_turns = 0
         user_turns = 0
 
+        # Track when the first final-answer marker appears (1-based assistant turn index)
+        first_answer_marker_turn: Optional[int] = None
+
         # Track the last assistant text for final reward
         last_assistant_text: str = ""
         accepted_steps: list[str] = []
@@ -453,12 +495,22 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
             last_assistant_text = str(assistant_text or "")
             messages.append({"role": "assistant", "content": assistant_text})
 
-            # Termination: if model already produced a final answer marker, stop (final reward will judge it).
-            finished = bool(_has_answer_marker(last_assistant_text))
+            # Anti-early-final gate: do not allow finishing before min_assistant_turns_before_answer.
+            has_marker = bool(_has_answer_marker(last_assistant_text))
+            if has_marker and first_answer_marker_turn is None:
+                first_answer_marker_turn = int(assistant_turns)  # 1-based
+            min_turns = int(getattr(cfg, "min_assistant_turns_before_answer", 0) or 0)
+            # Only allow finishing when we have reached the minimum turn count.
+            finished = bool(has_marker and (min_turns <= 0 or assistant_turns >= min_turns))
+            force_early_marker_fail = bool(has_marker and (min_turns > 0 and assistant_turns < min_turns))
 
             # 2) judge pns for this step
             with simple_timer("tool_calls", metrics):
-                pns = await self._judge_pns(
+                if force_early_marker_fail:
+                    # Skip judge: force rewrite when answer marker appears too early
+                    pns = 0.0
+                else:
+                    pns = await self._judge_pns(
                     request_id=request_id,
                     step_idx=step_idx,
                     attempt_idx=retry_for_current_step,
@@ -467,12 +519,13 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
                     assistant_text=str(assistant_text or ""),
                     prefix_steps=list(accepted_steps),
                     sampling_params=sampling_params,
-                )
+                    )
             pns_scores.append(float(pns))
 
             # Check if using float mode with no-retry (continuous reward shaping)
             is_float_no_retry = (
-                str(cfg.pns_mode).lower() != "discrete" 
+                (not force_early_marker_fail)
+                and str(cfg.pns_mode).lower() != "discrete" 
                 and bool(getattr(cfg, "pns_float_no_retry", False))
             )
 
@@ -499,10 +552,13 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
                 add_messages = [{"role": "user", "content": str(cfg.ok_continue_msg)}]
             else:
                 # Original discrete/retry mode
-                if str(cfg.pns_mode).lower() == "discrete":
-                    passed = bool(float(pns) >= 0.5)  # treat as 0/1
+                if force_early_marker_fail:
+                    passed = False
                 else:
-                    passed = bool(float(pns) >= float(cfg.pns_threshold))
+                    if str(cfg.pns_mode).lower() == "discrete":
+                        passed = bool(float(pns) >= 0.5)  # treat as 0/1
+                    else:
+                        passed = bool(float(pns) >= float(cfg.pns_threshold))
                 
                 if passed:
                     turn_scores.append(float(cfg.pass_reward))
@@ -527,7 +583,14 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
                     else:
                         turn_scores.append(float(cfg.fail_reward))
                         retry_counts.append(int(retry_for_current_step))
-                        fb = cfg.feedback_template.format(pns=float(pns), threshold=float(cfg.pns_threshold))
+                        if force_early_marker_fail:
+                            fb = (
+                                "This step is not acceptable. You revealed a final answer too early.\n"
+                                f"Do NOT output any final answer marker (<ANSWER>/####/\\\\boxed/Answer:) until step >= {min_turns}.\n"
+                                "Rewrite ONLY this single step (1-3 sentences) and continue."
+                            )
+                        else:
+                            fb = cfg.feedback_template.format(pns=float(pns), threshold=float(cfg.pns_threshold))
                         add_messages = [{"role": "user", "content": fb}]
 
             # Append feedback user message and continue
@@ -546,7 +609,13 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
 
         # Final reward (answer correctness) - reuse parent implementation
         final_reward = 0.0
-        if self.verifier_cfg.final_enable and ground_truth is not None:
+        # If a final-answer marker appeared too early, penalize and suppress final correctness reward.
+        min_turns = int(getattr(cfg, "min_assistant_turns_before_answer", 0) or 0)
+        early_pen = float(getattr(cfg, "early_answer_penalty", 0.0) or 0.0)
+        early_answer = bool(min_turns > 0 and first_answer_marker_turn is not None and int(first_answer_marker_turn) < min_turns)
+        if early_answer and early_pen > 0:
+            final_reward = -early_pen
+        elif self.verifier_cfg.final_enable and ground_truth is not None:
             try:
                 final_reward = await self._verify_final(
                     request_id=request_id,
@@ -617,6 +686,7 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
         )
 
         return output
+
 
 
 

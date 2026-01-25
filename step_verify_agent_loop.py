@@ -55,23 +55,67 @@ def _extract_last_assistant_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _has_answer_marker(text: str) -> bool:
+def _has_answer_marker_bak(text: str) -> bool:
     """
     Heuristic: detect whether a model output already contains a "final answer" marker.
-    This is useful for debugging "why does the model answer too early?".
+    Used to gate or debug "answer too early" behavior.
+
+    Covers common formats:
+      - <ANSWER>...</ANSWER>
+      - GSM8K: #### <answer>
+      - \boxed{...}
+      - "final answer"
+      - "Answer: ..."
+      - "The answer is ..."
     """
     if not isinstance(text, str):
         return False
     t = text
+
+    if "<answer" in t.lower() or "</answer" in t.lower():
+        return True
+
+    # GSM8K marker: #### <answer>
+    if re.search(r"####\s*\S+", t):
+        return True
+
+    if "\\boxed" in t:
+        return True
+
+    if re.search(r"final\s+answer", t, flags=re.IGNORECASE):
+        return True
+
+    # Common bypasses
+    if re.search(r"^\s*answer\s*:\s*\S+", t, flags=re.IGNORECASE | re.MULTILINE):
+        return True
+    if re.search(r"the\s+answer\s+is\s+\S+", t, flags=re.IGNORECASE):
+        return True
+
+    return False
+
+    t = text
     # common patterns we care about
     if "<answer" in t.lower() or "</answer" in t.lower():
         return True
-    # GSM8K style final answer marker
-    if re.search(r"###\s*\S+", t):
-        return true
     if "\\boxed" in t:
         return True
     if re.search(r"final\s+answer", t, flags=re.IGNORECASE):
+        return True
+    return False
+
+import re
+
+_ANSWER_TAG_RE = re.compile(r"<\s*answer\s*>|<\s*/\s*answer\s*>", flags=re.IGNORECASE)
+_GSM8K_RE = re.compile(r"####\s*\S+")
+
+def _has_answer_marker(text: str) -> bool:
+    if not isinstance(text, str):
+        return False
+    t = text
+    # Only strict final formats
+    if _ANSWER_TAG_RE.search(t):
+        return True
+    if _GSM8K_RE.search(t):
         return True
     return False
 
@@ -240,11 +284,12 @@ class _VerifierConfig:
     # Keep configurable so users can match their judge model recommendations.
     final_llm_temperature: float = 0.0
     final_llm_top_p: float = 1.0
-
-    # anti-early-final gate:
+    
+    # Anti-early-final gate:
+    # Require at least this many assistant turns before allowing any "final answer" marker.
+    # If violated, final reward is suppressed (and optionally a penalty is applied).
     min_assistant_turns_before_answer: int = 0
     early_answer_penalty: float = 0.0
-
     # Optional overrides for FINAL judge backend/model (useful when step judge != final judge).
     # If any of these are set, final judge will use them instead of the shared judge_* config.
     final_judge_backend: Optional[str] = None  # policy | local | remote
@@ -797,7 +842,13 @@ class StepVerifyAgentLoop(AgentLoopBase):
             assistant_turn_texts.append(str(assistant_text or ""))
             if first_answer_marker_turn is None and _has_answer_marker(assistant_text):
                 first_answer_marker_turn = assistant_turns - 1  # 0-based assistant turn index
-
+                print(
+                    "MARKER_HIT",
+                    "turn=", assistant_turns,
+                    "marker_turn=", first_answer_marker_turn,
+                    "min_turns=", int(getattr(self.verifier_cfg, "min_assistant_turns_before_answer", 0) or 0),
+                    "text_head=", (assistant_text or "")[:160].replace("\n", "\\n"),
+                )
             # 3) verify this step (hybrid)
             step_ctx = {
                 "step_idx": len(turn_scores),
@@ -939,31 +990,37 @@ class StepVerifyAgentLoop(AgentLoopBase):
             if response_logprobs:
                 response_logprobs += [0.0] * len(user_ids)
 
-		# 5) final reward (independent): only depends on final correctness
-		# Add an anti-early-final gate to prevent "answer too early" collapse when final_weight is large.
-		final_reward = 0.0
-		min_turns = int(getattr(self.verifier_cfg, "min_assistant_turns_before_answer", 0) or 0)
-		early_pen = float(getattr(self.verifier_cfg, "early_answer_penalty", 0.0) or 0.0)
-		early_answer = (
-			(min_turns > 0)
-			and (first_answer_marker_turn is not None)
-			and ((int(first_answer_marker_turn) + 1) < min_turns)/
-		)
-		
-		if self.verifier_cfg.final_enable and ground_truth is not None:
-			if early_answer:
-				# Suppress final correctness reward; optionally apply a penalty
-				final_reward = -early_pen if early_pen > 0 else 0.0
-			else:
-				last_assistant = _extract_last_assistant_text(messages)
-				final_reward = await self._verify_final(
-					request_id=request_id,
-					problem_text=str(problem_text),
-					last_assistant_text=str(last_assistant),
-					ground_truth=str(ground_truth),
-					sampling_params=sampling_params,
-				)
-				final_reward *= float(self.verifier_cfg.final_weight)
+        # 5) final reward (independent): only depends on final correctness
+        # Anti-early-final gate: suppress/penalize if a "final answer" marker appears too early.
+        final_reward = 0.0
+        min_turns = int(getattr(self.verifier_cfg, "min_assistant_turns_before_answer", 0) or 0)
+        early_pen = float(getattr(self.verifier_cfg, "early_answer_penalty", 0.0) or 0.0)
+        early_answer = (
+            (min_turns > 0)
+            and (first_answer_marker_turn is not None)
+            and ((int(first_answer_marker_turn) + 1) < min_turns)
+        )
+
+        if self.verifier_cfg.final_enable and ground_truth is not None:
+            if early_answer:
+                final_reward = -early_pen if early_pen > 0 else 0.0
+                print(
+                    "EARLY_TRIGGER",
+                    "first_marker_turn=", first_answer_marker_turn,
+                    "min_turns=", min_turns,
+                    "text_head=", (_extract_last_assistant_text(messages) or "")[:160].replace("\n", "\\n"),
+                )
+            else:
+                last_assistant = _extract_last_assistant_text(messages)
+                final_reward = await self._verify_final(
+                    request_id=request_id,
+                    problem_text=str(problem_text),
+                    last_assistant_text=str(last_assistant),
+                    ground_truth=str(ground_truth),
+                    sampling_params=sampling_params,
+                )
+                final_reward *= float(self.verifier_cfg.final_weight)
+
 
         # Optional PRM "final_once" evaluation: compute PRM scores once over the whole problem and map back to turns.
         if bool(getattr(self.verifier_cfg, "prm_enable", False)) and (self.verifier_cfg.prm_eval_mode or "").lower() == "final_once":
@@ -1941,6 +1998,7 @@ class StepVerifyAgentLoop(AgentLoopBase):
             image_data=None,
         )
         return await self.loop.run_in_executor(None, lambda: self.tokenizer.decode(out.token_ids, skip_special_tokens=True))
+
 
 
 
