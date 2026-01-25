@@ -9,7 +9,7 @@
     judge_device: cpu
     judge_dtype: float32
 
-    pns_mode: float
+    pns_mode: discrete
     pns_seqcls_enable: true
     pns_float_no_retry: false
     pns_penalty_scale: 0.1
@@ -34,7 +34,7 @@
     # 判分/奖励
     pns_threshold: 0.6
     pns_pass_reward: 0.05
-    pns_fail_reward: -0.005
+    pns_fail_reward: 0.0
     pns_max_retries: 2
     pns_exceed_retry_penalty: 0.05
 
@@ -62,19 +62,19 @@
 
     # 关键：把 max_steps 调小，避免永远 “continue” 到 multi_turn 上限
     # GSM8K 一般 6-10 步足够；你现在 num_turns 打满就是这里太大导致的概率很高
-    pns_max_steps: 12
+    pns_max_steps: 32
 
     early_answer_penalty: 0.0
-    min_assistant_turns_before_answer: 2
+    min_assistant_turns_before_answer: 0
 
     # 关键：恢复按回合数缩放，避免 turn-farming（走更多步就赚更多）
     step_scale_by_num_turns: true
-    step_total_weight: 0.2
+    step_total_weight: 0.3
     step_clip_min: -1.0
     step_clip_max: 1.0
 
     final_enable: true
-    final_weight: 2.0
+    final_weight: 1.0
     final_mode: answer
     final_llm_enable: false
 

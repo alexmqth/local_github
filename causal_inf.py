@@ -11,6 +11,7 @@ Ultimate Causal Inference Script (Fixed Sharding & Anti-Repetition).
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -311,10 +312,38 @@ def main() -> int:
     judge_model.eval()
     judge_model.to(judge_device)
 
-    if args.dataset_config:
-        ds = load_dataset(args.dataset_name, args.dataset_config, split=args.split)
-    else:
-        ds = load_dataset(args.dataset_name, split=args.split)
+    # =========================
+    # Dataset loading
+    # - supports:
+    #   1) HF dataset id (e.g., HuggingFaceH4/MATH-500)
+    #   2) local dataset script/dir
+    #   3) direct parquet file path (e.g., /path/to/gsm8k_test.parquet)
+    #   4) directory containing parquet files (*{split}*.parquet)
+    # =========================
+    def load_any_dataset(dataset_name: str, dataset_config: Optional[str], split: str):
+        dn = str(dataset_name or "").strip()
+        dn = _clean_path(dn)
+        dn_low = dn.lower()
+
+        # Case 1) direct parquet file path
+        if dn_low.endswith(".parquet") and os.path.isfile(dn):
+            data_files = {split: dn}
+            return load_dataset("parquet", data_files=data_files, split=split)
+
+        # Case 2) directory that contains parquet files (try *{split}*.parquet)
+        if os.path.isdir(dn):
+            cands = sorted(glob.glob(os.path.join(dn, f"*{split}*.parquet")))
+            if cands:
+                data_files = {split: cands[0]}
+                return load_dataset("parquet", data_files=data_files, split=split)
+
+        # Case 3) normal HF dataset id / local dataset script dir
+        if dataset_config:
+            return load_dataset(dn, dataset_config, split=split)
+        return load_dataset(dn, split=split)
+
+    ds = load_any_dataset(args.dataset_name, args.dataset_config, args.split)
+
     if int(args.max_examples) > 0:
         ds = ds.select(range(min(int(args.max_examples), len(ds))))
 
@@ -525,8 +554,10 @@ def main() -> int:
             n_correct += int(correct)
             pbar.set_description(f"{args.dataset_name} acc={n_correct/n_total:.4f}")
             
+            # Use global idx so merged multi-rank outputs can be stably sorted
+            global_idx = (rank + i * world_size) if world_size > 1 else i
             f.write(json.dumps({
-                "idx": i, "problem": problem, "gt": gt_norm, "pred": pred_norm, "correct": correct, "steps": rr.steps
+                "idx": global_idx, "problem": problem, "gt": gt_norm, "pred": pred_norm, "correct": correct, "steps": rr.steps
             }, ensure_ascii=False) + "\n")
             
             if args.profile and (i + 1) % args.profile_every == 0:
@@ -537,3 +568,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
