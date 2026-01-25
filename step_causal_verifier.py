@@ -463,6 +463,10 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
         retry_for_current_step = 0
         while True:
             # termination: token budget / turn limits
+
+            # if self.prompt_length and (len(prompt_ids) + len(user_ids)) >= int(self.prompt_length):
+            #    break
+
             if len(response_mask) >= self.response_length:
                 break
             if self.max_assistant_turns and assistant_turns >= self.max_assistant_turns:
@@ -495,14 +499,33 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
             last_assistant_text = str(assistant_text or "")
             messages.append({"role": "assistant", "content": assistant_text})
 
-            # Anti-early-final gate: do not allow finishing before min_assistant_turns_before_answer.
+
+            # --- Anti-early-final gate + FINAL BYPASS PNS ---
             has_marker = bool(_has_answer_marker(last_assistant_text))
+
+            # Record first marker turn (for optional penalty/debug)
             if has_marker and first_answer_marker_turn is None:
-                first_answer_marker_turn = int(assistant_turns)  # 1-based
+                first_answer_marker_turn = int(assistant_turns)  # 1-based assistant turn index
+
             min_turns = int(getattr(cfg, "min_assistant_turns_before_answer", 0) or 0)
-            # Only allow finishing when we have reached the minimum turn count.
-            finished = bool(has_marker and (min_turns <= 0 or assistant_turns >= min_turns))
-            force_early_marker_fail = bool(has_marker and (min_turns > 0 and assistant_turns < min_turns))
+
+            # IMPORTANT: interpret min_turns as "min accepted steps before final", not raw assistant_turns
+            # step_idx is the accepted-step counter in this loop.
+            allow_finish = (min_turns <= 0) or (step_idx >= min_turns)
+
+            # If final marker appears AND we are allowed to finish:
+            #   -> DO NOT run PNS on this final output (final is judged by final reward), just break.
+            if has_marker and allow_finish:
+                finished = True
+                force_early_marker_fail = False
+                break
+
+            # If marker appears too early:
+            #   -> force rewrite (skip judge) and continue retry flow
+            finished = False
+            force_early_marker_fail = bool(has_marker and (not allow_finish))
+            # --- END gate ---
+
 
             # 2) judge pns for this step
             with simple_timer("tool_calls", metrics):
@@ -600,14 +623,19 @@ class StepCausalVerifierAgentLoop(StepVerifyAgentLoop):
             messages.extend(add_messages)
             user_turns += 1
 
-            user_ids = await self._encode_incremental_messages(add_messages)
+            # user_ids = await self._encode_incremental_messages(add_messages)
             # if len(response_mask) + len(user_ids) >= self.response_length:
             #     break
             # 用 prompt_length 做上限（通常是 4096），避免 feedback 一加就 break
+            # if self.prompt_length and (len(prompt_ids) + len(user_ids)) >= int(self.prompt_length):
+            #     break
+            # prompt_ids += user_ids
+
+            user_ids = await self._encode_incremental_messages(add_messages)
             if self.prompt_length and (len(prompt_ids) + len(user_ids)) >= int(self.prompt_length):
                 break
-
             prompt_ids += user_ids
+
             response_mask += [0] * len(user_ids)
             if response_logprobs:
                 response_logprobs += [0.0] * len(user_ids)
