@@ -12,7 +12,7 @@ PROJECT_ROOT="/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/verl-01-
 RUN_DIR="$PROJECT_ROOT/verl/experimental/agent_loop"
 
 # wandb
-project_name="${project_name:-step_causal_verifier-01-25-20}"
+project_name="${project_name:-step_causal_verifier-01-26-0}"
 
 #TRAIN_PARQUET="${TRAIN_PARQUET:-$PROJECT_ROOT/data/pns_agentloop_math_all.parquet}"
 TRAIN_PARQUET="${TRAIN_PARQUET:-$PROJECT_ROOT/data/pns_agentloop_gsm8k.parquet}"
@@ -21,7 +21,7 @@ VAL_PARQUET="${VAL_PARQUET:-$TRAIN_PARQUET}"
 MODEL_PATH="${MODEL_PATH:-/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/Qwen/Qwen2.5-7B-Instruct}"
 
 #experiment_name="${experiment_name:-qwen2_5_7b_ins_math_all_epoch3}"
-experiment_name="${experiment_name:-qwen2_5_7b_ins_gsm8k-01-25-20}"
+experiment_name="${experiment_name:-qwen2_5_7b_ins_gsm8k-01-26-0}"
 
 verifier_yaml="$RUN_DIR/step_causal_verifier.yaml"
 #verifier_yaml="$RUN_DIR/step_causal_verifier_gsm8k.yaml"
@@ -79,9 +79,9 @@ train_batch_size=64
 ppo_mini_batch_size=64
 micro_batch_size=32
 
-max_turns=12
+max_turns=24
 max_prompt_length=4096
-max_response_length=64
+max_response_length=256
 
 infer_tp=1
 train_sp=1
