@@ -47,6 +47,20 @@ def _import_by_path(dotted_path: str) -> Any:
     mod = importlib.import_module(module_name)
     return getattr(mod, attr)
 
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+def _normalize_answer_str(x: str) -> str:
+    s = (x or "").strip()
+    # common formatting
+    s = s.replace(",", "")
+    s = s.replace("$", "")
+    # if contains a number, compare by numeric token
+    m = _NUM_RE.search(s)
+    if m:
+        return m.group(0)
+    # else fallback to cleaned string
+    return s.lower()
+
 
 def _extract_last_assistant_text(messages: list[dict[str, Any]]) -> str:
     for item in reversed(messages):
@@ -159,6 +173,12 @@ def _extract_final_answer(text: str) -> Optional[str]:
         cand = m3[-1].strip()
         if cand:
             return cand.rstrip(" .;，。；!")
+    # Fallback: "ANSWER: xxx" (common in small models)
+    m4 = re.findall(r"^\s*ANSWER\s*:\s*([^\n\r]+)", t2, flags=re.IGNORECASE | re.MULTILINE)
+    if m4:
+        cand = m4[-1].strip()
+        if cand:
+            return cand
 
     # If <Answer> existed, use its content as last resort
     if m:
@@ -1540,9 +1560,13 @@ class StepVerifyAgentLoop(AgentLoopBase):
         if mode == "answer":
             extracted = _extract_final_answer(last_assistant_text)
             if extracted is not None and ground_truth is not None:
-                a = str(extracted).strip()
-                gt = str(ground_truth).strip()
+                # a = str(extracted).strip()
+                # gt = str(ground_truth).strip()
+                # rule_score = 1.0 if a == gt else 0.0
+                a = _normalize_answer_str(str(extracted))
+                gt = _normalize_answer_str(str(ground_truth))
                 rule_score = 1.0 if a == gt else 0.0
+
 
         llm_score: Optional[float] = None
         if mode == "proof":
