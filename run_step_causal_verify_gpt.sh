@@ -150,9 +150,9 @@ train_batch_size=64
 ppo_mini_batch_size=64
 micro_batch_size=32
 
-max_turns=24
+max_turns=12
 max_prompt_length=4096
-max_response_length=64
+max_response_length=1024
 
 infer_tp=1
 train_sp=1
@@ -352,7 +352,7 @@ run_one_model() {
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.default_local_dir="$default_local_dir" \
-    trainer.save_freq=500 \
+    trainer.save_freq=30 \
     trainer.test_freq=-1 \
     trainer.total_epochs=1 \
     "${EXTRA_TRAIN_ARGS[@]}"
