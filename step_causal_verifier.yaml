@@ -1,0 +1,81 @@
+- name: step_causal_verifier_agent
+  _target_: verl.experimental.agent_loop.step_causal_verifier.StepCausalVerifierAgentLoop
+
+  step_verify:
+    judge_max_concurrency: 96
+
+    judge_backend: local
+      #judge_model_name_or_path: /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/gsm8k_deberta_regression
+    judge_model_name_or_path: MakimaSasha/CausalReasoningModel
+    judge_device: cpu
+    judge_dtype: float32
+
+    pns_mode: discrete
+    pns_seqcls_enable: true
+    pns_float_no_retry: false
+    pns_penalty_scale: 0.1
+
+    # 保持与 judge 训练一致的输入分布（不要加长“规则提示词”，避免分布漂移）
+    pns_prompt_template: |-
+      Question:
+      {problem}
+
+      Prefix steps:
+      {subproblem}
+
+      Candidate step:
+      {answer}
+
+      pns=
+
+    pns_max_new_tokens: 8
+    pns_temperature: 0.0
+    pns_top_p: 1.0
+
+    # 判分/奖励
+    pns_threshold: 0.7
+    pns_pass_reward: 0.05
+    pns_fail_reward: 0.0
+    pns_max_retries: 2
+    pns_exceed_retry_penalty: 0.05
+
+    # 更通用的反馈：要求“推进”，但不强制一定是数值（兼容 StrategyQA/STRATQA）
+    pns_feedback_template: |-
+      This step is not acceptable.
+      Rewrite ONLY this single step and try again. Requirements:
+      - Exactly ONE coherent reasoning step (1-3 sentences)
+      - Do NOT add multiple steps at once
+      - The step MUST make concrete progress (derive ONE new fact/constraint/intermediate result; avoid vague planning or restating)
+      - If the task involves numbers, include the computed intermediate value when applicable
+      - Do NOT provide the final answer and do NOT include "<ANSWER>"
+      - Keep it short
+
+    pns_ok_continue_msg: |-
+      Good. Continue with the next step (one step only).
+
+    # 兼容非数字答案（yes/no/实体名等）；也降低截断导致解析失败风险
+    pns_ok_finish_msg: |-
+      Good. Output ONLY the final answer in the exact format:
+      <ANSWER>...</ANSWER>
+
+    pns_proceed_after_penalty_msg: |-
+      Too many retries. Proceed to the next step anyway (one step only).
+
+    # 关键：把 max_steps 调小，避免永远 “continue” 到 multi_turn 上限
+    # GSM8K 一般 6-10 步足够；你现在 num_turns 打满就是这里太大导致的概率很高
+    pns_max_steps: 6
+
+    early_answer_penalty: 0.0
+    min_assistant_turns_before_answer: 0
+
+    # 关键：恢复按回合数缩放，避免 turn-farming（走更多步就赚更多）
+    step_scale_by_num_turns: true
+    step_total_weight: 0.2
+    step_clip_min: -1.0
+    step_clip_max: 1.0
+
+    final_enable: true
+    final_weight: 1.0
+    final_mode: answer
+    final_llm_enable: false
+
