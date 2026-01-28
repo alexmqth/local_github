@@ -40,8 +40,8 @@ adv_estimator="${adv_estimator:-grpo_token_level}"
 HF_MODELS_ROOT="${HF_MODELS_ROOT:-/home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/Qwen}"
 
 # checkpoints / merged models
-CKPT_ROOT="${CKPT_ROOT:-$PROJECT_ROOT/checkpoints}"
-RL_MODELS_ROOT="${RL_MODELS_ROOT:-$PROJECT_ROOT/rl_models}"
+CKPT_ROOT="${CKPT_ROOT:-$PROJECT_ROOT/checkpoints/math/soft}"
+RL_MODELS_ROOT="${RL_MODELS_ROOT:-$PROJECT_ROOT/rl_models/math/soft}"
 
 # evaluation
 EVAL_DATASET="${EVAL_DATASET:-$PROJECT_ROOT/datasets/GSM8K/gsm8k_test.parquet}"
@@ -62,8 +62,8 @@ fi
 # 2) Queue / Wait settings
 ############################################
 IDLE_CHECK_INTERVAL="${IDLE_CHECK_INTERVAL:-60}"   # 每隔多少秒检查一次
-IDLE_GRACE_SECONDS="${IDLE_GRACE_SECONDS:-300}"    # 检测到空闲后再等 5 分钟
-BETWEEN_MODELS_SLEEP="${BETWEEN_MODELS_SLEEP:-180}" # 每个模型完成后等 3 分钟再开始下一个
+IDLE_GRACE_SECONDS="${IDLE_GRACE_SECONDS:-60}"    # 检测到空闲后再等 5 分钟
+BETWEEN_MODELS_SLEEP="${BETWEEN_MODELS_SLEEP:-60}" # 每个模型完成后等 3 分钟再开始下一个
 
 # 你想把哪些进程视为“训练还在跑”
 BUSY_PATTERN="${BUSY_PATTERN:-verl\.trainer\.main_ppo|step_causal_verifier_agent|ray::|vllm}"
@@ -158,7 +158,7 @@ train_batch_size=64
 ppo_mini_batch_size=64
 micro_batch_size=32
 
-max_turns=6
+max_turns=8
 max_prompt_length=4096
 max_response_length=2048
 
@@ -342,7 +342,7 @@ run_one_model() {
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$infer_tp" \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.prompt_length="$max_prompt_length" \
     actor_rollout_ref.rollout.response_length="$max_response_length" \
     actor_rollout_ref.rollout.n="$n_resp_per_prompt" \

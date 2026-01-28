@@ -6,11 +6,12 @@
 
     judge_backend: local
       #judge_model_name_or_path: /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/gsm8k_deberta_regression
-    judge_model_name_or_path: MakimaSasha/CausalReasoningModel
+    judge_model_name_or_path: /home/projects/hku-medai/larrypl/code/mq/causal-reasoning/hf_models/math_deberta_regression
+      #judge_model_name_or_path: MakimaSasha/CausalReasoningModel
     judge_device: cpu
     judge_dtype: float32
 
-    pns_mode: discrete
+    pns_mode: float
     pns_seqcls_enable: true
     pns_float_no_retry: false
     pns_penalty_scale: 0.1
@@ -33,7 +34,7 @@
     pns_top_p: 1.0
 
     # 判分/奖励
-    pns_threshold: 0.7
+    pns_threshold: 0.6
     pns_pass_reward: 0.05
     pns_fail_reward: 0.0
     pns_max_retries: 2
@@ -70,7 +71,7 @@
 
     # 关键：恢复按回合数缩放，避免 turn-farming（走更多步就赚更多）
     step_scale_by_num_turns: true
-    step_total_weight: 0.2
+    step_total_weight: 0.3
     step_clip_min: -1.0
     step_clip_max: 1.0
 
